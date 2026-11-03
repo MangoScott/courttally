@@ -134,7 +134,7 @@ def make_proxy(
     if fps:
         cmd += ["-r", f"{fps}"]
     cmd += [
-        "-vsync",
+        "-fps_mode",  # ffmpeg >= 5.1; "-vsync" was removed in ffmpeg 9
         "cfr",
         "-c:v",
         "libx264",
