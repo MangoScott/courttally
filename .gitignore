@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.ruff_cache/
+.pytest_cache/
+build/
+dist/
+
+# Model weights are never committed (scripts/download_models.py fetches them)
+models/*
+!models/.gitkeep
+
+# Run artifacts
+outputs/*
+!outputs/.gitkeep
+
+# Video clips are large; keep only small hand-picked ones by force-adding
+data/clips/*
+!data/clips/.gitkeep
+
+# Prior-art checkouts
+reference/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

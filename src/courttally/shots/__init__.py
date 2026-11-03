@@ -1,0 +1,1 @@
+"""courttally.shots package."""

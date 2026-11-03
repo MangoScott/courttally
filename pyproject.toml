@@ -1,0 +1,53 @@
+[project]
+name = "courttally"
+version = "0.1.0"
+description = "Open-source single-camera tennis analysis: court detection, ball and player tracking, shot stats, line calling."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "pandas>=2.1",
+    "pyarrow>=15",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+# Heavy ML deps. Phase 0 stubs run without them; `uv sync --extra ml` once
+# real detectors land (Phase 1+). torch picks MPS / CUDA / CPU automatically.
+ml = [
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "ultralytics>=8.1",
+]
+
+[project.scripts]
+ct = "courttally.cli:main"
+courttally = "courttally.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/courttally"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: full-pipeline integration tests on real clips"]
+addopts = "-m 'not slow'"
