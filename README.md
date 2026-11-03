@@ -12,7 +12,21 @@ uv run pytest                # fast unit tests
 uv run pytest -m slow        # full pipeline on data/clips/smoke.mp4 (or a synthetic clip)
 ```
 
-Run on a clip:
+Cut the dead time out of a session and tag the points (no ML models needed):
+
+```bash
+uv run ct autoedit session.mp4                 # -> outputs/session/
+open outputs/session/review.html               # J/K step points, A/B who won, X drop, E export
+uv run ct cut session.mp4 --points outputs/session/points.edited.json
+uv run ct score session.mp4                    # tennis score progression from the tags
+```
+
+`autoedit` builds a proxy, finds points from motion + sound, writes
+`points.json/.csv/.edl`, a review page, per-point clips and `condensed.mp4`.
+Cuts are stream-copied from the original, so exports keep full capture quality.
+See `docs/recording.md` for how to film.
+
+Run the analysis pipeline on a clip:
 
 ```bash
 uv run ct info data/clips/smoke.mp4

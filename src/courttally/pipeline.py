@@ -13,6 +13,7 @@ ball-model change does not re-run court detection.
 
 from __future__ import annotations
 
+import json as _json
 import logging
 from pathlib import Path
 
@@ -20,7 +21,10 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from courttally import video
+from courttally import activity as activity_mod
+from courttally import editor, export, media, video
+from courttally import points as points_mod
+from courttally import score as score_mod
 from courttally.ball import tracker as ball_tracker
 from courttally.ball.detector import NoBall
 from courttally.court import geometry
@@ -148,4 +152,153 @@ def analyze(
     stage_players(clip, run_dir)
     stage_annotate(clip, run_dir)
     stage_stats(clip, run_dir)
+    return run_dir
+
+
+# ---- recording / editing stages -------------------------------------------
+# These do not need any learned model. They are the SwingVision features users
+# feel first: keep the original at full quality, find the points, cut the dead
+# time, review and tag quickly, export to an editor.
+
+
+def stage_ingest(clip: Path, run_dir: Path, proxy_width: int = 1280) -> Path:
+    """Probe the original and build a browser/analysis-friendly proxy next to it.
+
+    Returns the proxy path. The original is untouched; cuts always come from it.
+    """
+    info = media.probe_media(clip)
+    (run_dir / "ingest.json").write_text(_json.dumps(info.to_dict(), indent=2))
+    notes = []
+    if info.variable_frame_rate:
+        notes.append("variable frame rate: analysis uses the CFR proxy")
+    if info.hdr:
+        notes.append("HDR source: proxy is tone mapped to SDR")
+    log.info(
+        "ingest: %dx%d %.2ffps %s %s %.1fs audio=%s %s",
+        info.width,
+        info.height,
+        info.fps,
+        info.codec,
+        info.pix_fmt,
+        info.duration_s,
+        info.has_audio,
+        "; ".join(notes),
+    )
+    proxy = run_dir / "proxy.mp4"
+    if not proxy.exists():
+        media.make_proxy(clip, proxy, width=proxy_width)
+    return proxy
+
+
+def _analysis_video(clip: Path, run_dir: Path) -> Path:
+    proxy = run_dir / "proxy.mp4"
+    return proxy if proxy.exists() else clip
+
+
+def stage_activity(clip: Path, run_dir: Path, audio_weight: float = 0.5) -> pd.DataFrame:
+    src = _analysis_video(clip, run_dir)
+    court_path = run_dir / "court.json"
+    court = CourtResult.from_json(court_path) if court_path.exists() else None
+    df = activity_mod.compute_activity(src, court, audio_weight=audio_weight)
+    df.to_parquet(run_dir / "activity.parquet", index=False)
+    log.info(
+        "activity: %d frames, audio=%s, court mask=%s",
+        len(df),
+        df["audio"].notna().any(),
+        court is not None and court.homography is not None,
+    )
+    return df
+
+
+def stage_points(clip: Path, run_dir: Path, **thresholds) -> list[points_mod.Point]:
+    src = _analysis_video(clip, run_dir)
+    info = video.probe(src)
+    df = pd.read_parquet(run_dir / "activity.parquet")
+    pts = points_mod.activity_to_points(df, info.fps, **thresholds)
+    points_mod.save_json(pts, run_dir / "points.json", clip.name, info.duration_s, info.fps)
+    export.write_editor_files(pts, run_dir, info.fps, title=clip.stem)
+    s = points_mod.summary(pts, info.duration_s)
+    log.info(
+        "points: %d found, play %.0fs, dead %.0fs (%.0f%%)",
+        s["n_points"],
+        s["play_s"],
+        s["dead_s"],
+        100 * s["dead_fraction"],
+    )
+    return pts
+
+
+def _load_points(run_dir: Path, points_file: Path | None = None) -> list[points_mod.Point]:
+    """Prefer the user's edited points over the automatic ones."""
+    if points_file is None:
+        edited = run_dir / "points.edited.json"
+        points_file = edited if edited.exists() else run_dir / "points.json"
+    return points_mod.load_json(points_file)
+
+
+def stage_review(clip: Path, run_dir: Path, points_file: Path | None = None) -> Path:
+    src = _analysis_video(clip, run_dir)
+    info = video.probe(src)
+    pts = _load_points(run_dir, points_file)
+    rel = src.name if src.parent == run_dir else str(src.resolve())
+    out = editor.write_review_page(pts, run_dir, rel, clip.name, info.duration_s, info.fps)
+    log.info("review: open %s in a browser", out)
+    return out
+
+
+def stage_cut(
+    clip: Path,
+    run_dir: Path,
+    mode: str = "copy",
+    points_file: Path | None = None,
+    per_point: bool = True,
+) -> dict:
+    pts = _load_points(run_dir, points_file)
+    info = video.probe(clip)
+    export.write_editor_files(pts, run_dir, info.fps, title=clip.stem)
+    result = export.cut_points(clip, run_dir, pts, mode=mode, per_point=per_point)
+    (run_dir / "cut.json").write_text(_json.dumps(result, indent=2))
+    return result
+
+
+def stage_score(
+    run_dir: Path, points_file: Path | None = None, best_of: int = 3, no_ad: bool = False
+) -> dict:
+    pts = _load_points(run_dir, points_file)
+    winners = [p.winner if p.keep else None for p in pts]
+    progression = score_mod.score_points(winners, best_of=best_of, no_ad=no_ad)
+    final = next((s for s in reversed(progression) if s), None)
+    result = {
+        "tagged_points": sum(1 for w in winners if w),
+        "untagged_points": sum(1 for w in winners if not w),
+        "points_won": {"A": winners.count("A"), "B": winners.count("B")},
+        "final": final,
+        "progression": [
+            {"point": p.index, "start_s": p.start_s, "winner": p.winner, "score_after": s}
+            for p, s in zip(pts, progression, strict=True)
+        ],
+    }
+    (run_dir / "score.json").write_text(_json.dumps(result, indent=2))
+    return result
+
+
+def autoedit(
+    clip: Path,
+    outputs: Path,
+    run: str | None = None,
+    keypoints_json: Path | None = None,
+    mode: str = "copy",
+    cut_video: bool = True,
+    **thresholds,
+) -> Path:
+    """Ingest -> (court) -> activity -> points -> review page -> cuts. No ML needed."""
+    run_dir = run_dir_for(clip, outputs, run)
+    stage_ingest(clip, run_dir)
+    if keypoints_json is not None:
+        stage_court(clip, run_dir, keypoints_json=keypoints_json)
+    stage_activity(clip, run_dir)
+    stage_points(clip, run_dir, **thresholds)
+    stage_review(clip, run_dir)
+    if cut_video:
+        stage_cut(clip, run_dir, mode=mode)
     return run_dir

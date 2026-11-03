@@ -17,6 +17,25 @@ clips. Check items off as they land; add discovered failure modes under each pha
 - [ ] Reference: clone abdullahtarek/tennis_analysis into `reference/` (gitignored)
       and get it running on `smoke.mp4` as a baseline. Note what breaks.
 
+## Phase R — Recording, points, dead-time removal, editing (owner's top priority)
+- [x] `docs/recording.md`: phone recipe (4K60, locked exposure, no auto-fps) + capture app requirements
+- [x] `ct ingest`: ffprobe facts (codec, VFR, HDR, rotation, audio) → `ingest.json`; CFR SDR `proxy.mp4`
+- [x] `ct activity`: motion energy (court-masked when `court.json` exists) + audio RMS → `activity.parquet`
+- [x] `ct points`: hysteresis segmentation, merge/min-len/padding → `points.json/.csv/.edl`
+- [x] `ct review`: `review.html`, keyboard tagging (winner, keep/drop, trim, add point, label), live score, export
+- [x] `ct cut`: per-point clips + `condensed.mp4` from the ORIGINAL via stream copy; `--mode accurate` re-encodes
+- [x] `ct score`: ad / no-ad, tiebreak, best-of-N → `score.json` with per-point progression
+- [x] `ct autoedit`: the whole chain in one command
+- [x] Slow test: synthetic 3 s rally / 2 s pause clip → points land on the rallies, condensed.mp4 written
+- [ ] Run on 3 real sessions; tune `--on/--off/--min-len/--merge-gap` defaults; record failure modes
+- [ ] Keyframe-aware `copy` cuts: snap point starts to the previous keyframe (ffprobe `-skip_frame nokey`) so
+      clips are never late, then trim the condensed video accurately in one re-encode pass
+- [ ] Serve detection from audio+motion (first hit after a long quiet) to auto-fill the server
+- [ ] FCPXML export (Final Cut / DaVinci native) in addition to EDL
+- [ ] Highlights: longest points, points labelled by the user, `highlights.mp4`
+- Failure modes to expect: wind noise, neighbouring courts' hits, players walking during changeovers
+  (motion without play), auto-exposure flicker, ball kids. Court masking from Phase 1 will help the first three.
+
 ## Phase 1 — Court detection + homography
 - [ ] 14-keypoint court model (ResNet50 head from yastrebksv dataset) behind `KeypointModel`
 - [ ] Confirm `geometry.KEYPOINT_NAMES` order matches the yastrebksv label order

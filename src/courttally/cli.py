@@ -46,7 +46,85 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("stats", help="write stats.json from cached stage outputs")
     _add_common(s)
+
+    # --- recording / editing (no ML models needed) ---
+    s = sub.add_parser("autoedit", help="ingest, find points, cut dead time, build review page")
+    _add_common(s)
+    _add_points_opts(s)
+    s.add_argument(
+        "--keypoints",
+        type=Path,
+        default=None,
+        help="court keypoints JSON to mask motion to the court",
+    )
+    s.add_argument(
+        "--mode",
+        choices=["copy", "accurate"],
+        default="copy",
+        help="cut mode (copy = lossless/instant)",
+    )
+    s.add_argument(
+        "--no-cut", action="store_true", help="skip writing clips; just points + review page"
+    )
+
+    s = sub.add_parser("ingest", help="probe the original and build proxy.mp4 for analysis/review")
+    _add_common(s)
+    s.add_argument("--proxy-width", type=int, default=1280)
+
+    s = sub.add_parser("activity", help="motion + audio activity per frame -> activity.parquet")
+    _add_common(s)
+    s.add_argument("--audio-weight", type=float, default=0.5)
+
+    s = sub.add_parser("points", help="segment activity into points -> points.json/.csv/.edl")
+    _add_common(s)
+    _add_points_opts(s)
+
+    s = sub.add_parser("review", help="write review.html for tagging winners and trimming points")
+    _add_common(s)
+    s.add_argument(
+        "--points",
+        type=Path,
+        default=None,
+        help="points JSON (default: points.edited.json if present, else points.json)",
+    )
+
+    s = sub.add_parser("cut", help="export per-point clips + condensed.mp4 from the ORIGINAL")
+    _add_common(s)
+    s.add_argument("--points", type=Path, default=None)
+    s.add_argument("--mode", choices=["copy", "accurate"], default="copy")
+    s.add_argument("--condensed-only", action="store_true", help="do not keep per-point clips")
+
+    s = sub.add_parser(
+        "score", help="tennis score progression from tagged point winners -> score.json"
+    )
+    _add_common(s)
+    s.add_argument("--points", type=Path, default=None)
+    s.add_argument("--best-of", type=int, default=3)
+    s.add_argument("--no-ad", action="store_true")
     return p
+
+
+def _add_points_opts(p: argparse.ArgumentParser) -> None:
+    g = p.add_argument_group("point detection")
+    g.add_argument("--on", type=float, default=0.5, help="activity level that starts a point")
+    g.add_argument(
+        "--off", type=float, default=0.25, help="activity level below which a point ends"
+    )
+    g.add_argument("--min-len", type=float, default=1.5, help="drop points shorter than this (s)")
+    g.add_argument("--merge-gap", type=float, default=1.5, help="merge points closer than this (s)")
+    g.add_argument("--pad-pre", type=float, default=1.0, help="seconds added before each point")
+    g.add_argument("--pad-post", type=float, default=1.5, help="seconds added after each point")
+
+
+def _thresholds(args: argparse.Namespace) -> dict:
+    return {
+        "on": args.on,
+        "off": args.off,
+        "min_len_s": args.min_len,
+        "merge_gap_s": args.merge_gap,
+        "pad_pre_s": args.pad_pre,
+        "pad_post_s": args.pad_post,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -80,6 +158,39 @@ def main(argv: list[str] | None = None) -> int:
         pipeline.stage_annotate(args.clip, run_dir)
     elif args.cmd == "stats":
         print(json.dumps(pipeline.stage_stats(args.clip, run_dir), indent=2))
+    elif args.cmd == "autoedit":
+        pipeline.autoedit(
+            args.clip,
+            args.outputs,
+            args.run,
+            args.keypoints,
+            mode=args.mode,
+            cut_video=not args.no_cut,
+            **_thresholds(args),
+        )
+        print(
+            f"review: open {run_dir / 'review.html'} in a browser, tag winners, press E to export,"
+        )
+        print(f"        then: ct cut {args.clip} --points {run_dir / 'points.edited.json'}")
+    elif args.cmd == "ingest":
+        pipeline.stage_ingest(args.clip, run_dir, proxy_width=args.proxy_width)
+    elif args.cmd == "activity":
+        pipeline.stage_activity(args.clip, run_dir, audio_weight=args.audio_weight)
+    elif args.cmd == "points":
+        pipeline.stage_points(args.clip, run_dir, **_thresholds(args))
+    elif args.cmd == "review":
+        pipeline.stage_review(args.clip, run_dir, args.points)
+    elif args.cmd == "cut":
+        pipeline.stage_cut(
+            args.clip,
+            run_dir,
+            mode=args.mode,
+            points_file=args.points,
+            per_point=not args.condensed_only,
+        )
+    elif args.cmd == "score":
+        result = pipeline.stage_score(run_dir, args.points, best_of=args.best_of, no_ad=args.no_ad)
+        print(json.dumps({k: v for k, v in result.items() if k != "progression"}, indent=2))
     print(f"wrote {run_dir}")
     return 0
 

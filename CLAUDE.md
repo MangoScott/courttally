@@ -6,14 +6,25 @@ research models, running offline first and on-device later.
 
 ## What we are building (in priority order)
 
-1. Court detection → homography from camera view to a 2D court (meters).
-2. Ball tracking → per-frame ball position + bounce detection.
-3. Player detection/tracking → feet positions projected onto the 2D court.
-4. Shot segmentation → each ball-racket contact becomes a "shot" with speed,
-   depth, placement, and who hit it.
-5. Line calling → bounce point in/out using the court polygon + tolerance.
-6. Session summary → stats JSON + CSV, annotated video, highlight clips.
-7. (Later) On-device: Core ML / TFLite export and an iOS capture app.
+The owner's priorities, in order: recording quality, point tracking (score),
+automatic dead-time removal, and easy editing. Tracking models come after.
+
+1. Recording: never degrade the original; ingest any phone format (HEVC, HDR,
+   variable frame rate) into a proxy for analysis and cut exports from the
+   original with stream copy. See `docs/recording.md`.
+2. Dead-time removal: motion + audio activity → points → per-point clips and a
+   condensed video, with no learned model in the loop.
+3. Point tracking: a fast keyboard review page to tag who won each point and a
+   tennis scoring state machine (ad / no-ad, tiebreaks, best-of-N).
+4. Easy editing: CSV, CMX3600 EDL and JSON exports; trimming and re-cutting
+   from the review page without re-running analysis.
+5. Court detection → homography from camera view to a 2D court (meters).
+6. Ball tracking → per-frame ball position + bounce detection.
+7. Player detection/tracking → feet positions projected onto the 2D court.
+8. Shot segmentation → speed, depth, placement, and who hit it.
+9. Line calling → bounce point in/out using the court polygon + tolerance.
+10. Session summary → stats JSON + CSV, annotated video, highlight clips.
+11. (Later) iOS capture app; on-device Core ML / TFLite export.
 
 ## Non-negotiables
 
@@ -66,11 +77,18 @@ courttally/
   CLAUDE.md
   PLAN.md                     # phased task list, update as we go
   pyproject.toml
+  docs/recording.md           # capture recipe + capture app requirements
   src/courttally/
-    cli.py                    # `ct analyze clip.mp4`, `ct court`, `ct ball`, ...
+    cli.py                    # `ct autoedit clip.mp4`, `ct cut`, `ct analyze`, ...
     pipeline.py               # stages + run-folder layout
     types.py                  # Box, detections, Detector / KeypointModel protocols
     video.py                  # frame reading/writing, fps, resizing
+    media.py                  # ffmpeg: probe, proxy, audio, lossless cut, concat
+    activity.py               # motion + audio activity signal per frame
+    points.py                 # point segmentation, JSON/CSV/EDL
+    score.py                  # tennis scoring state machine
+    editor.py                 # review.html generator (tag winners, trim, drop)
+    export.py                 # per-point clips + condensed.mp4
     court/                    # geometry (meters), keypoint model, homography
     ball/                     # detector, tracker, interpolation, bounce detection
     players/                  # YOLO detection, ID tracking, foot-point projection
@@ -87,8 +105,15 @@ courttally/
   tests/
 ```
 
-Run folder (`outputs/<clip-stem>/`): `court.json`, `ball.parquet`,
-`players.parquet`, `annotated.mp4`, `stats.json`.
+Run folder (`outputs/<clip-stem>/`): `ingest.json`, `proxy.mp4`,
+`activity.parquet`, `points.json` (+ `.csv`, `.edl`), `review.html`,
+`points.edited.json` (from the review page), `points/point_NNN.mp4`,
+`condensed.mp4`, `score.json`; and from the analysis pipeline `court.json`,
+`ball.parquet`, `players.parquet`, `annotated.mp4`, `stats.json`.
+
+ffmpeg is required for ingest/cut. A system `ffmpeg` is used when present;
+otherwise the static binary from `imageio-ffmpeg` (a core dependency). `ffprobe`
+is optional and only improves `ingest.json`.
 
 ## Court geometry (single source of truth)
 
